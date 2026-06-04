@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Output directories from skill runs
+dois_new.txt
+dois_in_library.txt
+pending.txt
+download pdf/
+all doi/
