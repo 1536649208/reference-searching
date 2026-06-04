@@ -28,7 +28,7 @@ The skill implements aggressive token optimization:
 
 ```bash
 # Clone the repo
-git clone https://github.com/YOUR_USERNAME/reference-searching.git
+git clone https://github.com/1536649208/reference-searching.git
 
 # Copy the skill to your Claude Code skills directory
 cp reference-searching/SKILL.md ~/.claude/skills/reference-searching/SKILL.md
