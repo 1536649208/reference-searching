@@ -26,18 +26,21 @@ The skill implements aggressive token optimization:
 
 ## Installation
 
+### Via npx skills (recommended)
+
+```bash
+npx skills add 1536649208/reference-searching-skill -g -y
+```
+
+### Manual install
+
 ```bash
 # Clone the repo
-git clone https://github.com/1536649208/reference-searching.git
+git clone https://github.com/1536649208/reference-searching-skill.git
 
 # Copy the skill to your Claude Code skills directory
-cp reference-searching/SKILL.md ~/.claude/skills/reference-searching/SKILL.md
-```
-
-Or install via the Claude Code skill marketplace:
-
-```
-/install reference-searching
+mkdir -p ~/.claude/skills/reference-searching
+cp reference-searching-skill/SKILL.md ~/.claude/skills/reference-searching/SKILL.md
 ```
 
 ## Usage
