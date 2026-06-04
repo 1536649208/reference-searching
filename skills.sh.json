@@ -1,0 +1,12 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "groupings": [
+    {
+      "title": "Academic Research",
+      "description": "Skills for academic literature mining, reference searching, and Zotero integration.",
+      "skills": [
+        "reference-searching"
+      ]
+    }
+  ]
+}
