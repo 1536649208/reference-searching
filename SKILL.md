@@ -1,240 +1,393 @@
 ---
 name: reference-searching
-description: "Search references of papers in a Zotero collection for papers related to a specific topic. Use when the user asks to find papers related to topic X from the references of papers in a Zotero collection/library, or wants to do citation chaining / reference mining from their Zotero library. Triggers include: \"search references in my Zotero\", \"find papers about X from my library's references\", \"从我的Zotero库里找XX相关的参考文献\", \"在我的XX collection里搜参考文献\"."
+description: "Search references of papers in a Zotero collection for papers related to a specific topic, or use a review outline to find relevant references either from Zotero reference chains or via direct web search. Use when the user asks to find papers related to topic X from the references of papers in a Zotero collection/library, wants to do citation chaining / reference mining from their Zotero library, or provides a review outline file to find relevant references. Triggers include: \"search references in my Zotero\", \"find papers about X from my library's references\", \"从我的Zotero库里找XX相关的参考文献\", \"在我的XX collection里搜参考文献\", \"根据综述大纲找参考文献\", \"帮我在写综述时找相关文献\"."
 ---
 
 # Reference Searching Skill
 
-从指定的 Zotero collection 中，逐篇打开源文章的参考文献列表，按用户指定的主题过滤，输出匹配文献的 DOI 清单。
+Two search modes: Zotero reference chain mining, or direct academic database search. Output: DOI lists for papers matching user topic/outline.
 
-## Phase 0: 收集用户输入
+## Mode Detection
 
-每次启动时，必须明确以下 4 项：
+Ask first, never guess:
 
-1. **Zotero collection 名称** — 哪个 collection 存放源文章
-2. **主题 / 特征关键词** — 参考文献需要匹配的主题（如"铝在电池热管理方面的应用"）
-3. **输出目录** — 存放 `dois.txt` 和 `pending.txt` 的路径
-4. **处理篇数** — 想处理多少篇源文章
+> 1. 主题模式 — 给主题找文献  2. 综述大纲模式 — 给大纲找文献
 
-如果用户在任何一项上未提供，主动询问。
+---
 
-## Workflow
+## Phase 0a: Topic Mode
 
-### Phase 1: 发现源文章
+### Step 0a-1: Collect (single message)
 
-1. 调用 `zotero_whoami` 确认 library 访问。
-2. 调用 `zotero_list_collections` 找到目标 collection，获取其 `key`。
-3. 调用 `zotero_search_items`，带上 `collectionKey`、`limit: 100`、`response_format: "concise"`，获取所有条目。**用 `concise` 而非 `detailed`**：此阶段只需要 key、title、itemType、collections、DOI、tags，`concise` 格式已包含全部这些字段，token 节省约 60%。（→ Pitfall 6）
-4. **过滤 parent items**：只保留 `collections` 包含目标 collection key 且 `itemType` 为 `journalArticle`、`conferencePaper` 或 `book` 的条目。排除 `attachment` 和 `note` 子项。（→ Pitfall 1）
-5. **CRITICAL — 检查已处理文章**：调用 `zotero_search_items`，`tag: "claude-read"`（`qmode: "everything"`），查出所有已被 `/reference-searching` 处理过的文章。`claude-read` 是全局标签，跨所有 collection 生效。排除已打此标签的文章。如果所有候选文章都已处理，报告并询问用户是否要重新处理某些。
-6. **排序源文章**：综述（review）→ survey → 其余。主题关键词不出现在此阶段的优先级判断中。
-7. 按用户指定的处理篇数截取列表，呈现给用户确认。已标记 `claude-read` 的文章显示为 "SKIPPED (已处理)"。
+1. Source: **A) Zotero chain** (mine refs from collection) / **B) Web search** (OpenAlex/Crossref)
+2. Topic description (e.g. "铝在电池热管理方面的应用")
+3. Output directory
+4. Zotero collection name (A only)
+5. Number of papers to process (A only)
+6. Dedup collection key — optional. If given, use collection DOIs for O(1) library dedup in Phase 5/W5. (Recommended for all modes to avoid library duplicates in output.)
 
-### Phase 2: 逐篇提取参考文献
+### Step 0a-2: Route
 
-对每篇选定的源文章，采用**关键词预筛 → 定向提取**的两步策略，避免拖回整段参考文献列表。
+- **A → Phase 1**
+- **B → Phase 0a-W** (derive keywords from topic, same logic as 0b-4, then → Phase W)
 
-**第一步 — 检查 PDF 附件**：调用 `zotero_get_item`，`include_children: true`，查找 `itemType: "attachment"` 且 `contentType: "application/pdf"` 的子项。
+---
 
-**第二步 — 关键词预筛（TOKEN 优化的核心）**：
+## Phase 0a-W: Topic → Structured Keywords → Web Search
 
-根据 Phase 0 用户输入的主题，系统化派生搜索关键词。**必须覆盖以下 4 个维度**：
+Same keyword derivation logic as Phase 0b-4, but input is a natural-language topic description instead of an outline file. Derive grand keyword (hard constraint) + 6–8 small keyword groups (max 12) from domain knowledge. Format as Phase 0b-5. After user confirmation → Phase W1.
 
-| 维度 | 示例（主题："铝在电池热管理中的应用"） |
-|------|------------------------------------------|
-| 英文全称 | `aluminium`, `aluminum` |
-| 元素符号 / 缩写 | `Al` (需配合上下文词如 `Al foam`, `Al heat sink`), `Al2O3`, `AlN` |
-| 中文术语 | `铝`, `泡沫铝`, `铝合金` |
-| 领域术语（可能隐含铝） | `metal foam`（电池热管理中 90% 是铝泡沫）, `porous metal` |
+---
 
-**派生后得到 6–8 个关键词**，用这些词作为 `query` 参数调用 `zotero_get_fulltext` 搜索 PDF 全文。
+## Phase 0b: Outline Mode — Structured Keywords (Grand + Small)
 
-搜索参数：`max_passages: 3`、`max_chars: 3000`。
+### Step 0b-1: Collect (single message)
 
-**如果无命中**：该论文不可能引用与主题相关的文献 → 直接跳过，不提取参考文献。
+1. Source: **A) Zotero chain** / **B) Web search** (OpenAlex/Crossref)
+2. Outline file path (PDF/DOCX/PPTX/XLSX/MD/txt/EPUB/HTML)
+3. Output directory
+4. Zotero collection name (A only)
+5. Dedup collection key — optional. Same purpose as Step 0a-1 item 6.
 
-**如果有命中**：进入第三步。
+### Step 0b-2: Convert
 
-**第三步 — 定向提取参考文献**：
-- 调用 `zotero_get_fulltext`，`query: "References"`（或中文"参考文献"），定位参考文献段落。
-- 使用 `max_passages: 4`、`max_chars: 8000`（从 20000 降至 8000——大多数参考文献列表在此范围内）。
-- 如果参考文献段落被截断（`truncated: true`），用 `page_range` 补全缺失的页面。
-- 解析提取到的文本，**重点关注包含预筛关键词的参考文献条目**，记录其标题和 DOI。
-
-**第四步 — 内联标题过滤**：
-- 提取参考文献时即时做标题过滤（Phase 3 Step 4），不要全部积累后再过滤。
-- 仅保留标题中明显涉及用户主题概念的条目，其余直接丢弃。
-- 只对保留下来的候选条目记录 DOI。
-
-**无 PDF**：将该源文章记录到 `pending.txt`（格式：`文章名 — DOI`），跳过。
-
-**关于 zotero_import**：不要调用 `zotero_import`。
-
-### Phase 3: 两层过滤
-
-#### Step 4 — 标题快速排除
-
-从 Phase 2 提取到的参考文献中，仅看标题即可判断与主题无关的，直接排除。此步做粗筛。
-
-#### Step 5 — 摘要深度判读（可选，仅在不确定时使用）
-
-Phase 2 第四步已做内联标题过滤。对标题无法明确判断的**边缘文献**，才需要获取摘要：
-
-获取摘要的手段（按优先级，优先使用免费结构化 API）：
-
-1. **已在 Zotero 库中的文献**：调用 `zotero_get_fulltext` 读取摘要段落（`max_chars: 2000`）
-2. **不在库中，有 DOI**：使用 **Crossref API** 直接获取结构化摘要（免费，无需 key）：
-   ```
-   WebFetch(url: "https://api.crossref.org/works/<DOI>", prompt: "提取 abstract 字段")
-   ```
-   返回纯 JSON，摘要字段为 `message.abstract`。一次调用，几十 token。
-3. **不在库中，无 DOI 但有标题**：使用 **Semantic Scholar API**（免费，无需 key）：
-   ```
-   WebFetch(url: "https://api.semanticscholar.org/graph/v1/paper/search?query=<URL编码标题>&limit=1&fields=title,abstract", prompt: "提取 abstract 字段")
-   ```
-4. **兜底**：如果以上手段都无法获取摘要，保留该文献（宁可保留，不可误杀）
-
-**Token 优化**：不逐篇获取摘要。仅对标题过滤后仍不确定的边缘文献（通常 < 20% 的候选条目）才进行摘要判读。标题明确相关的直接保留，标题明确不相关的已在 Phase 2 第四步丢弃。
-
-判定时综合考虑：
-- 标题和摘要是否直接涉及用户输入的主题概念
-- 方法论或材料是否密切相关
-- 宁可宽进，不可窄出 —— 让用户做最终决定
-
-### Phase 4: 去重（CRITICAL — 不可跳过）
-
-Phase 3 的匹配结果可能包含重复 —— 同一篇参考文献被多篇源文章引用时，会多次出现。写入前必须去重。
-
-**去重键优先级**：
-
-1. **DOI** — 首选。DOI 是文献唯一身份证，大小写不敏感（统一小写比较）。
-2. **归一化标题** — 无 DOI 时使用。规则：lowercase → 去掉所有标点符号和多余空格 → 截断到前 80 字符。
-3. **作者 + 年份 + 标题前缀** — 前两者都不满足时的兜底键。
-
-**实现**：维护一个 `seen` 集合。对每条匹配文献：
-- 计算去重键（先试 DOI，再试标题，最后组合键）
-- 如果键已在 `seen` 中 → 跳过
-- 否则加入 `seen`，保留该文献
-
-**去重统计**：记录去重前后数量，在 Phase 7 报告中体现。
-
-### Phase 5: 库内查重 — 排除已有文献（CRITICAL）
-
-Phase 4 去重后的文献中，可能有些**已经在你的 Zotero 库里**。直接输出会造成冗余。
-
-**查重策略（零额外 API 调用优先）**：
-
-1. **源文章 DOI 比对**（免费，零 token）：
-   - Phase 1 已拿到所有源文章的 DOI 列表
-   - 如果候选 DOI 等于某篇源文章的 DOI → 直接归入 `dois_in_library.txt`
-   - 这一步能排除大多数"已有"情况，且不产生任何额外 API 调用
-
-2. **标题关键词搜索**（仅在候选 DOI 较少时使用，< 10 条）：
-   - 对源文章比对后剩余的不确定 DOI
-   - 从标题中提取 3–5 个最具区分度的词
-   - 调用 `zotero_search_items(q="<关键词>", qmode="titleCreatorYear")` 确认是否在库中
-
-**Token 优化**：优先使用策略 1（免费）。策略 2 仅在候选较少时使用；如果候选 > 10，直接全部标记为"未验证新增"，让用户在 `dois_new.txt` 中自行判断。
-
-**输出文件**：
-
-| 文件 | 内容 |
-|------|------|
-| `dois_new.txt` | 库中**没有**或**未验证**的 DOI —— 需要用户最终确认 |
-| `dois_in_library.txt` | 库中**已有**的 DOI —— 已拥有，仅供参考 |
-| `pending.txt` | 无法提取参考文献的源文章（同 Phase 2） |
-
-### Phase 6: 输出匹配 DOI
-
-将 Phase 5 分类后的 DOI 写入对应文件。
-
-**写入前先确保输出目录存在**：
 ```bash
-mkdir -p "<output_dir>"
+markitdown "<file>" -o /tmp/reference_searching_outline.md
+```
+Fallback: `pipx install 'markitdown[all]'` if missing; `strings`/`cat` if pipx unavailable.
+
+### Step 0b-3: Parse
+
+Extract heading hierarchy (`#`–`####`) and body paragraphs (material names, process params, methods).
+
+### Step 0b-4: Derive Grand + Small Keywords (CRITICAL)
+
+**Principle**: Use model DOMAIN KNOWLEDGE to expand, not mechanically extract from text.
+
+**Step 1 — Grand keyword (hard constraint)**: Infer from review title + chapter headings. Every returned paper MUST relate to this. Example: "Aluminum Based Materials for BTMS" → `aluminum, aluminium, Al`.
+
+**Step 2 — Small keyword groups (directional constraint)**: Derive 6–8 groups (up to 12 for large outlines with 3–4+ extra knowledge domains) by material/concept, NOT by chapter. Groups ordered by importance. Each group = search terms connected by OR.
+
+Small keywords come from domain knowledge: "高导热增强体" → `SiC, diamond, graphene, AlN, B4C, carbon fiber`; "界面热阻" → `Kapitza resistance, thermal boundary conductance, acoustic mismatch model`.
+
+**Step 3 — User tags**: `[关键词: xxx, yyy]` in outline → top priority, merge into matching group.
+
+### Step 0b-5: Confirm (CRITICAL)
+
+Show hierarchical structure. Format:
+
+```
+▌Grand (ALL papers must match): aluminum, aluminium, Al
+▌Small (≥1 group per paper, max 12):
+  [1] BTMS applications → battery thermal management, BTMS, EV battery cooling...
+  [2] Al alloy thermal fundamentals → thermal conductivity, thermophysical, alloying...
+  ...
+Operations: add/del/modify any term; request more groups; change grand keyword.
 ```
 
-### Phase 7: 标记源文章为已处理（CRITICAL — 不可跳过）
+After confirmation, route: **Zotero chain → Phase 1** | **Web search → Phase W**.
 
-**每次运行结束后**，将所有本次处理的源文章打上 `claude-read` 标签（→ Pitfall 3）：
+---
+
+## Phase W: Web Search Pipeline
+
+For topic mode B or outline mode B. Skip Zotero, search databases directly.
+
+### Phase W1: Build Queries
+
+Each small keyword group → 1 query: `grand_keyword AND (group terms OR-connected)`. N groups → N queries. Use OpenAlex Boolean syntax (uppercase AND/OR, `%22` for phrase quotes). **≤8 terms per group OR-clause** to avoid URL length overflow.
+
+Example:
+```text
+aluminum AND ("battery thermal management" OR BTMS OR "EV battery cooling")
+aluminum AND ("matrix composite" OR AMC) AND (SiC OR AlN OR diamond OR graphene) AND ("interface thermal resistance" OR Kapitza)
+```
+
+### Phase W2: Search
+
+**Pre-check**: `openalex-paper-search` skill available (for abstract inverted-index reconstruction). If missing, degrade to Crossref for abstracts.
+
+**Tier 1 — OpenAlex** (primary, Boolean search, 240M+ works):
+
+```bash
+curl -s "https://api.openalex.org/works?search=<encoded>&per_page=50&filter=has_abstract:true,type:article|review,language:en,is_retracted:false,publication_year:>2014&sort=relevance_score:desc&select=id,display_name,publication_year,cited_by_count,doi,authorships,abstract_inverted_index,type&mailto=agent@kortix.ai"
+```
+
+Key filters: `has_abstract:true`, `type:article|review`, `language:en`, `is_retracted:false`, `publication_year:>2014` (override on request). Use `mailto=` for 10 req/s. Reconstruct abstracts from inverted index via Python (see openalex-paper-search skill).
+
+**Pagination**: `per_page=50` fetches top-50 by relevance. For queries returning >50 results, paginate with `&page=2` etc. (cap at 10 pages / 500 results per query to bound token cost). If a group needs deeper coverage, note in Phase W6 report.
+
+**Tier 2 — Crossref** (supplement): Only if OpenAlex returns <10 results for a group. Note: Crossref lacks Boolean support; degrade query to keyword OR-connection. Stricter Phase W3 verification needed for Crossref results.
+```bash
+curl -s "https://api.crossref.org/works?query=<keywords>&rows=20"
+```
+
+**Tier 3 — Semantic Scholar** (last resort, likely blocked): `WebFetch` on API if above tiers fail.
+
+### Phase W3: Verify Small Keyword Hits + Annotate
+
+Grand keyword already enforced in query. Do NOT re-verify grand.
+
+1. **Hit check**: Case-insensitive word-boundary match each paper title against small keyword terms. For terms ≤2 characters (e.g., "Al"), use \b word-boundary matching to avoid false positives ("Algorithm", "General"). Longer terms → substring match acceptable. ≥1 group matched → keep. Zero groups → discard. Multi-group matches → record all. (→ Pitfall 10)
+2. **Coverage annotation**: Tag each kept paper with matching group number(s) for Phase W6 stats.
+3. **Borderline papers**: If title unclear, batch-fetch abstracts. Collect all borderline DOIs → single bulk OpenAlex DOI lookup or batch Crossref calls. **Never fetch abstracts one-by-one.** Priority: OpenAlex inverted-index → Crossref API → keep.
+4. **Review priority**: Borderline `type:review` papers → prefer keep (naturally high overlap with review outlines).
+5. **Principle**: 宁可宽进不可窄出. User makes final call.
+
+**Zero-result fallback**: If OpenAlex + Crossref return 0 for a group, flag in report with suggestions (expand terms, relax AND conditions, mark as under-researched area). Don't block other groups.
+
+### Phase W4: Dedup
+
+Same as Phase 4. Key priority: DOI (lowercased) → normalized title (lowercase, strip punctuation, first 80 chars) → author+year+title prefix.
+
+Merge all query results, then global dedup.
+
+### Phase W5: Library Dedup + Output
+
+**If user provided dedup collection** (fastest, O(1) per paper, zero extra API calls):
+1. `zotero_whoami` → confirm access
+2. `zotero_search_items(collectionKey, limit:100, concise)` → get all DOIs
+3. Python `set` comparison against candidate DOIs → discard matches
+4. Paginate if collection >100 items
+
+**If no dedup collection** (Web search mode):
+⚠️ Without a dedup collection, library dedup is best-effort only. Output may include papers already in Zotero. Strongly recommend providing a dedup collection key in Step 0a-1/0b-1.
+1. Title keyword search (only if <10 candidates): `zotero_search_items(q="<3-5 distinctive words>", qmode="titleCreatorYear")` per candidate → match → discard
+2. Default: if >10 candidates, skip individual checking, keep all. Flag in Phase W6 report: "N candidates not checked against library — may contain duplicates."
+
+**If no dedup collection** (Zotero chain mode):
+1. Source article DOI comparison (free) — if candidate DOI matches any Phase 1 source DOI → discard
+2. Title keyword search (only if <10 candidates remain): `zotero_search_items(q="<keywords>", qmode="titleCreatorYear")`
+3. Default: if >10 candidates, skip individual checking, keep all
+
+**Output** (`mkdir -p "<output_dir>"` first):
+
+| File | Content |
+|------|---------|
+| `dois_new.txt` | One DOI per line, all NOT in library |
+
+No `pending.txt` (web search has no source articles).
+
+### Phase W6: Report
+
+- Mode: topic→web / outline→web
+- Outline path (outline mode only)
+- Grand keyword; small keyword group count & terms per group
+- Query count; data source stats (OpenAlex N / Crossref N)
+- Small keyword hit verification: excluded N
+- Abstract review: matched N
+- After dedup: N kept (N duplicates removed)
+- Library dedup: N discarded
+- Small keyword coverage stats per group (compact inline format):
+  ```
+  [1] BTMS → 8  [2] Al fundamentals → 5  [3] Fabrication → 3  ...
+  ```
+  (Inline numbers only — no ASCII bar art needed.)
+- Recommendations: flag sparse groups, suggest generating more or expanding terms.
+
+---
+
+## Phase 1: Discover Source Articles
+
+1. `zotero_whoami` → confirm access
+2. `zotero_list_collections` → target collection key
+3. `zotero_search_items(collectionKey, limit:100, concise, top:true)` — concise saves ~60% tokens vs detailed; `top:true` excludes child notes/attachments at API level (→ Pitfall 1). Check `totalResults`: if >100, paginate with `start` offset to fetch all items.
+4. Filter: only items where `collections` contains target key AND `itemType` ∈ {journalArticle, conferencePaper, book}. (Most child items already excluded by `top:true` above; → Pitfall 2)
+5. **CRITICAL**: `zotero_search_items(tag:"claude-read")` (NO qmode) → exclude already-processed papers (→ Pitfall 3). If all candidates processed, report and ask.
+6. Scope: topic mode → user-specified count; outline mode (Zotero chain) → all unprocessed
+7. Sort: review → survey → rest. Topic keywords NOT used in sort.
+8. Present list. Tagged papers shown as "SKIPPED (已处理)".
+
+Note: Web search modes skip Phase 1 entirely — no source articles.
+
+---
+
+## Phase 2: Extract References Per Paper
+
+Keyword-guided pre-screening → targeted extraction. Never pull entire reference list blindly.
+
+**Keywords source**:
+- Topic mode (Zotero chain): Derive pre-screen keywords from topic. Before Phase 2, show simple keyword list for user confirmation:
+  ```
+  Pre-screen: aluminum, Al → BTMS, thermal conductivity, PCM, foam, corrosion. Confirm?
+  ```
+- Outline mode (Zotero chain): Use Phase 0b-5 confirmed grand + small keywords.
+
+**Step 0 — Title pre-check** (token optimization): Before any API call, scan each source paper's title against keywords. Title clearly irrelevant (zero keyword hits) → skip paper entirely. Title clearly relevant (≥2 keyword hits in title) → skip pre-screen, go direct to Step 3. Ambiguous → proceed to Step 1. This avoids unnecessary `zotero_get_fulltext` calls.
+
+**Step 1 — PDF check**: `zotero_get_item(include_children:true)` → find `itemType:"attachment"` + `contentType:"application/pdf"`.
+
+**Step 2 — Pre-screen** (core token optimization): `zotero_get_fulltext` with keyword list, `max_passages:3, max_chars:3000`. No hits → paper irrelevant, skip entirely.
+
+**Step 2b — Pass-rate guard**: After processing all papers, compute pre-screen pass rate (papers with hits / total processed). If >80%, keywords are too broad (match nearly every paper's body text) → warn user and suggest refinement. Without refinement, token optimization is defeated. (→ Pitfall 11)
+
+**Step 3 — Extract references** (if hits from Step 2, or direct from Step 0): `zotero_get_fulltext(query:"References"` OR `"Bibliography"` OR `"Works Cited"` OR `"参考文献", max_passages:4, max_chars:8000)`. Query the reference section header in the paper's language. Fallback: if none found, try `query:"[1]"` to locate reference list by citation bracket patterns. If truncated, use `page_range` to fill missing pages. Parse for entries containing pre-screen keywords → record title + DOI.
+
+**Step 4 — Inline title filter**: Filter during extraction, don't accumulate. Keep only entries clearly relevant to topic. Discard rest immediately.
+
+**No PDF**: Record to `pending.txt` as `Title — DOI`.
+
+Never call `zotero_import`.
+
+---
+
+## Phase 3: Two-Pass Filtering
+
+#### Pass 1 — Title Quick-exclude
+
+Coarse filter: title clearly irrelevant → discard. (Phase 2 Step 4 does this inline already.)
+
+#### Pass 2 — Abstract Deep-read (borderline only, <20% of candidates)
+
+**Borderline definition** (HARD constraint): A paper is borderline IFF (a) title matched **<2 small keyword terms** AND (b) paper is **NOT** a review/survey type. Papers with ≥2 keyword hits in title OR type:review → PASS straight to keep, no abstract needed. (→ Pitfall 13)
+
+**Threshold enforcement**: Count borderline papers before fetching abstracts. If borderline count >20% of total candidates → warn user: "N/Total (X%) papers flagged as borderline — abstract review will consume significant tokens. Continue? [y/n]". Default to skip abstract review and keep all if user doesn't respond.
+
+Abstract retrieval priority (**batch only, never one-by-one**):
+1. In Zotero library → `zotero_get_fulltext` (abstract section, `max_chars:2000`)
+2. Has DOI → collect all borderline DOIs → single bulk OpenAlex lookup or batch Crossref calls. Reconstruct abstracts via Python.
+3. No DOI, has title → OpenAlex search or Semantic Scholar fallback
+4. Otherwise → keep (宁可保留不可误杀)
+
+Judgment: does title/abstract directly involve user's topic? Is methodology/material closely related? Default: keep.
+
+---
+
+## Phase 4: Dedup (CRITICAL — Mandatory)
+
+Multi-source papers may repeat across source articles. Dedup before writing.
+
+Keys (priority): DOI (lowercased) → normalized title (lowercase, strip punctuation, first 80 chars) → author+year+title prefix.
+
+Maintain `seen` set. Compute key → in set → skip | not in set → add, keep.
+
+---
+
+## Phase 5: Library Dedup + Output
+
+Papers already in Zotero → silently discard.
+
+**Strategy** (zero-API-call priority):
+1. Source article DOI comparison (free): candidate DOI == any Phase 1 source article DOI → discard
+2. Title keyword search (only if <10 candidates): `zotero_search_items(q="<3-5 distinctive words>", qmode:"titleCreatorYear")`
+3. Default: >10 candidates → skip individual check, keep all
+
+Output (`mkdir -p "<output_dir>"`):
+
+| File | Content |
+|------|---------|
+| `dois_new.txt` | DOIs NOT in library, one per line |
+| `pending.txt` | Source articles without PDF: `Title — DOI` |
+
+No `dois_in_library.txt`. Library matches are silently dropped.
+
+---
+
+## Phase 6: Tag Source Articles (CRITICAL — Zotero Chain Only)
+
+Web search modes skip this Phase (no source articles).
 
 ```text
-zotero_manage_tags(action: "add", tags: ["claude-read"], item_keys: ["<key1>", "<key2>", ...])
+zotero_manage_tags(action:"add", tags:["claude-read"], item_keys:[...])
 ```
 
-关键点：
-- 标记的是**源文章**（被提取参考文献的），不是找到的参考文献
-- `claude-read` 是**全局标签**，跨所有 collection 生效
-- 如果本次运行中用户明确要求重新处理某篇已标记文章，允许，但需标注"已处理过"
-- 如果这一步被遗忘，下次运行会产生重复劳动
+- Tag SOURCE articles (not found references)
+- `claude-read` is global, cross-collection
+- Forgetting this = duplicated work next run (→ Pitfall 3)
 
-### Phase 8: 报告 & 自我改进
-
-完成后呈现总结：
-
-- 处理了多少篇源文章
-- 提取了多少条参考文献
-- 标题过滤排除了多少条
-- 摘要判读后匹配了多少条
-- **去重后保留多少条**（去除了多少条重复）
-- **库内查重结果**：多少条是新增（不在库中），多少条已拥有
-- 多少条 DOI 写入了 `dois_new.txt`
-- 多少条 DOI 写入了 `dois_in_library.txt`
-- 多少篇源文章因无 PDF 写入了 `pending.txt`
-- 输出文件的完整路径
+**Verification** (mandatory): After tagging, run `zotero_manage_tags(action:"list", q:"claude")` and confirm all processed item_keys appear. If any missing → re-tag. Silent API failures here cause duplicated work next session.
 
 ---
 
-## Token 优化策略（CRITICAL — 每次运行必须遵守）
+## Phase 7: Report & Self-Improvement
 
-本 skill 的主要 token 消耗源及优化措施：
-
-| 消耗源 | 优化前 | 优化后 | 节省 |
-|--------|--------|--------|------|
-| Phase 1 条目扫描 | `detailed` 格式 | `concise` 格式 | ~60% |
-| Phase 2 参考文献提取 | 全文拖回 20000 chars | 关键词预筛→定向提取 8000 chars | ~70% |
-| Phase 2 不相关论文 | 强制提取参考文献 | 关键词无命中直接跳过 | ~100% |
-| Phase 3 摘要判读 | 逐篇获取摘要 | 仅边缘文献 | ~80% |
-| Phase 5 库内查重 | 逐条 Zotero 搜索 | 源文章比对（免费）优先 | ~90% |
-
-**核心原则**：先筛后取，宁可漏网不可拖全库。每次 API 调用前自问："这个调用真的需要吗？能不能用已有信息判断？"
+- Mode: topic/outline × Zotero-chain/web-search (4 combos)
+- Outline mode: outline path, grand keyword, small keyword groups + terms
+- Web search: query count, OpenAlex N / Crossref N, coverage stats
+- Zotero chain: source articles processed, pending.txt count
+- Common: extracted N, title-excluded N, abstract-matched N, after-dedup N (duplicates removed), library-dedup N, dois_new.txt N, output path
+- Coverage stats (web search only — Zotero chain uses free-form pre-screening, no structured groups)
 
 ---
 
-## Self-Improvement 机制（CRITICAL）
+## Token Optimization (CRITICAL — Every Run)
 
-**每次运行结束后**，review 本次运行中遇到的异常或错误：
+| Source | Before | After | Saving |
+|--------|--------|-------|--------|
+| Phase 1 scan | `detailed` format | `concise` + `top:true` format | ~60% |
+| Phase 2 title pre-check | API call per paper | title keyword scan → skip irrelevant | ~50% |
+| Phase 2 ref extraction | 20000 chars full refs | pre-screen→8000 chars targeted | ~70% |
+| Phase 2 irrelevant papers | forced extraction | keyword miss→skip | ~100% |
+| Phase 3 abstract review | every paper | borderline only (<20%, batch-fetched) | ~80% |
+| Phase 3 batch abstracts | N individual API calls | 1 bulk lookup | ~90% |
+| Phase 5 library dedup | per-paper Zotero search | source-DOI or dedup-collection set comparison | ~90% |
+| Phase W2 data source | single Crossref | OpenAlex Boolean + select fields | ~50% |
+| Phase W6 report | ASCII bar chart | inline numbers | ~30% |
+| Phase 0b outline mode | mechanical term extraction | domain-knowledge grand+small structured queries | accuracy ↑↑↑ |
 
-1. 如果是**新类型的错误**（未出现在 Pitfall 列表中），在 Common Pitfalls 中新增一条
-2. 如果是**已有 Pitfall 再次触发**，检查预防措施是否足够 —— 不够则加强措辞
-3. 新增 Pitfall 格式：`### Pitfall N: <简短描述>`，然后 `**What happened**:`、`**Prevention**:`
-4. 编号自动递增
+**Core rule**: Screen before fetch. Ask: "Is this API call needed? Can existing info decide?"
 
-目标：每次调用都比上一次更可靠。错误不是失败 —— 是让 skill 变强的数据。
+---
+
+## Self-Improvement (CRITICAL)
+
+After each run, review errors:
+1. New error type → add Pitfall below (N+1)
+2. Existing Pitfall retriggered → strengthen prevention wording
+3. Format: `### Pitfall N: <short>`, `**Happened**:`, `**Prevention**:`
 
 ---
 
 ## Common Pitfalls
 
-### Pitfall 1: `zotero_search_items` 返回的条目中混入 attachment 和子项
-**What happened**: `zotero_search_items` 返回了 96 条结果，实际只有 48 条是父条目 —— 一半是子附件。
-**Prevention**: 始终按 `collections` 字段过滤。只有 `collections` 包含目标 collection key 的条目才是真正的父条目。`itemType: "attachment"` 且 `collections` 为空的条目是子项。
+### Pitfall 1: items mixed with attachments/children
+**Happened**: 96 results, 48 were child attachments.
+**Prevention**: Filter by `collections` containing target key. Items with empty `collections` + `itemType:"attachment"` = children.
 
-### Pitfall 2: 盲信 OpenAlex / 外部数据源的元数据
-**What happened**: 部分参考文献的标题被截断、摘要缺失或作者信息不完整。盲信导致低质量过滤。
-**Prevention**: 对于元数据不完整的边缘文献，不要直接丢弃。通过 WebSearch 补全信息后再做判断。
+### Pitfall 2: Blind trust in OpenAlex/external metadata
+**Happened**: Truncated titles, missing abstracts, incomplete authors → low-quality filtering.
+**Prevention**: Don't discard metadata-incomplete borderline papers. Supplement via WebSearch.
 
-### Pitfall 3: 忘记在运行开始检查 `claude-read` 标签、运行结束打标签
-**What happened**: 处理了源文章却没有先检查哪些已打过 `claude-read` 标签。也曾在结束后忘记打标签。前者导致重复劳动，后者导致下次运行没有记忆。
-**Prevention**: Phase 1 Step 5 是强制的 —— 每次选源文章前必须查询 `tag: "claude-read"`。Phase 7 是强制的 —— 每次结束后必须给所有源文章打 `claude-read`。两步缺一不可。
+### Pitfall 3: Missing claude-read check (start) and tag (end)
+**Happened**: Processed papers without checking existing tags; forgot to tag after completion.
+**Prevention**: Phase 1 Step 5 mandatory before selection. Phase 6 mandatory after completion. Both required.
 
-### Pitfall 4: `dois.txt` 中出现重复 DOI
-**What happened**: 同一篇参考文献被多篇源文章引用，在 Phase 3 匹配后多次出现，写入 `dois.txt` 时未去重，导致 DOI 索引中有重复条目。
-**Prevention**: Phase 4 是强制去重步骤。以 DOI（优先）或归一化标题为键，维护全局 `seen` 集合。每次写入前必须经过去重。Phase 8 报告中必须报告去重数量。
+### Pitfall 4: Duplicate DOIs in output
+**Happened**: Same reference cited by multiple source articles, output without dedup.
+**Prevention**: Phase 4 mandatory. Global `seen` set by DOI→title→author+year. Report dedup count.
 
-### Pitfall 5: 找到的参考文献 DOI 用户库中已有
-**What happened**: 参考文献挖掘找到的论文，实际上用户 Zotero 库里已经有了（甚至就在同一个 collection 中）。直接输出到 `dois.txt` 导致用户以为发现了新文献，实际是已知论文。
-**Prevention**: Phase 5 是强制库内查重步骤。优先用源文章 DOI 比对（零 token），输出拆分为 `dois_new.txt`（新增/未验证）和 `dois_in_library.txt`（已拥有）。Phase 8 报告中分别报告新增和已有数量。
+### Pitfall 5: Already-in-library papers in output
+**Happened**: Found papers user already has → redundant output.
+**Prevention**: Phase 5 library dedup. Silently drop matches. User only sees new papers.
 
-### Pitfall 6: Phase 2 全文拖回整个参考文献列表导致 token 爆炸
-**What happened**: 每篇源文章用 `max_chars: 20000` 拖回整个参考文献段落。43 篇论文 × 20000 chars = 大量 token 消耗，其中大部分参考文献与主题无关。
-**Prevention**: Phase 2 必须执行关键词预筛。先用用户主题关键词（如 `aluminium, Al2O3`）在 PDF 中搜索（`max_passages: 3, max_chars: 3000`）。无命中 → 跳过该论文。有命中 → 才提取参考文献段落（`max_chars: 8000`）。不相关的论文不产生参考文献提取成本。同时，Phase 1 使用 `concise` 格式、Phase 5 优先用源文章比对（免费）、Phase 3 摘要判读仅用于边缘文献。
+### Pitfall 6: Phase 2 pulling entire reference lists → token explosion
+**Happened**: 43 papers × 20000 chars = massive token waste, mostly irrelevant refs.
+**Prevention**: Keyword pre-screen mandatory (`max_passages:3, max_chars:3000`). No hits → skip paper. Hits → extract refs section with `max_chars:8000`.
+
+### Pitfall 7: `tag` param written as `q` param
+**Happened**: `q:"claude-read"` + `qmode:"everything"` returned 0 results; 54 tagged papers existed.
+**Prevention**: Phase 1 Step 5 MUST use `tag:"claude-read"` (not `q`, no `qmode`). Verify with `zotero_manage_tags(action:"list", q:"claude")` if suspicious.
+
+### Pitfall 8: Pre-screen hits body text, not references → low DOI yield
+**Happened**: Keywords hit Introduction/Discussion (inline citations like "Wang et al. [24]"), not reference list.
+**Prevention**: Pre-screen = relevance check only, NOT DOI extraction. After hits, MUST separately pull reference section via `query:"References"` + `page_range`.
+
+### Pitfall 9: markitdown unavailable → outline mode fails
+**Happened**: .docx outline but markitdown CLI missing or incompatible Python.
+**Prevention**: `which markitdown` before conversion. Missing → `pipx install 'markitdown[all]'`. No pipx → fallback to `strings`/`cat` for text extraction.
+
+### Pitfall 10: Short acronym false positives in keyword matching
+**Happened**: Grand keyword "Al" substring-matched "Algorithm", "General", "signal" → irrelevant papers kept.
+**Prevention**: Phase W3 hit check: terms ≤2 characters → use word-boundary matching (`\bAl\b`). Longer terms → substring match acceptable.
+
+### Pitfall 11: Overly broad keywords → pre-screen always passes → token waste
+**Happened**: Grand keyword matched every source paper's body text (paper is about that topic). Pre-screen pass rate 100% → every paper went to full reference extraction → ~70% token savings defeated.
+**Prevention**: Phase 2 Step 2b pass-rate guard: if >80% papers pass pre-screen, warn user and suggest keyword refinement. Without refinement, token cost approaches pre-optimization levels.
+
+### Pitfall 12: Web search mode without dedup collection → library duplicates in output
+**Happened**: Web search found 50 papers; no dedup collection provided; >10 candidates → skip individual check → 30 papers already in library leaked to output.
+**Prevention**: Phase W5: if no dedup collection in web search mode, warn user explicitly. Flag in Phase W6 report how many papers were NOT checked against library.
+
+### Pitfall 13: Phase 3 borderline threshold not enforced → abstracts fetched for all papers
+**Happened**: Model judged every paper as "borderline" → fetched abstracts for all 200 candidates → ~80% token savings from "borderline only" strategy completely lost.
+**Prevention**: Phase 3 Pass 2 hard borderline definition: <2 keyword hits in title AND not a review. Count before fetching. If >20%, warn user and default to keep-all without abstract review.

@@ -7,16 +7,18 @@ A [Claude Code](https://claude.ai/code) skill for automated citation chaining an
 ## How it Works
 
 ```
-Zotero Collection → 源文章发现 → PDF全文关键词预筛 → 参考文献提取
-    → 标题过滤 → 摘要深度判读（仅边缘文献）→ 去重 → 库内查重
-    → dois_new.txt + dois_in_library.txt
+Zotero Collection → 源文章发现 → 标题预检 → PDF全文关键词预筛 → 参考文献提取
+    → 标题过滤 → 摘要深度判读（仅边缘文献，批量获取）→ 去重 → 库内查重
+    → dois_new.txt (+ pending.txt)
 ```
 
 The skill implements aggressive token optimization:
-- **~60%** savings from concise API responses
+- **~60%** savings from concise + top:true API responses
+- **~50%** savings from title keyword pre-check before PDF fetch
 - **~70%** savings from keyword pre-filtering PDFs before extracting references
-- **~80%** savings from abstract-only-on-ambiguous-papers strategy
-- **~90%** savings from zero-cost source-article dedup
+- **~80%+** savings from abstract-only-on-borderline-papers strategy (hard criteria + batch fetch)
+- **~90%** savings from dedup-collection set comparison or zero-cost source-article dedup
+- **~50%** savings from OpenAlex Boolean search + structured fields vs Crossref text search
 
 ## Prerequisites
 
@@ -26,21 +28,18 @@ The skill implements aggressive token optimization:
 
 ## Installation
 
-### Via npx skills (recommended)
-
-```bash
-npx skills add 1536649208/reference-searching-skill -g -y
-```
-
-### Manual install
-
 ```bash
 # Clone the repo
-git clone https://github.com/1536649208/reference-searching-skill.git
+git clone https://github.com/1536649208/reference-searching.git
 
 # Copy the skill to your Claude Code skills directory
-mkdir -p ~/.claude/skills/reference-searching
-cp reference-searching-skill/SKILL.md ~/.claude/skills/reference-searching/SKILL.md
+cp reference-searching/SKILL.md ~/.claude/skills/reference-searching/SKILL.md
+```
+
+Or install via the Claude Code skill marketplace:
+
+```
+/install reference-searching
 ```
 
 ## Usage
@@ -55,16 +54,15 @@ The skill will guide you through 4 required inputs:
 
 1. **Zotero collection name** — which collection holds your source papers
 2. **Topic / keywords** — what topic should the references match
-3. **Output directory** — where to save `dois_new.txt`, `dois_in_library.txt`, and `pending.txt`
+3. **Output directory** — where to save `dois_new.txt` and `pending.txt`
 4. **Number of papers to process** — how many source papers to mine
 
 ### Output Files
 
 | File | Content |
 |------|---------|
-| `dois_new.txt` | New references not found in your library |
-| `dois_in_library.txt` | References already in your library (FYI) |
-| `pending.txt` | Source papers that couldn't be processed (no PDF) |
+| `dois_new.txt` | New references not found in your library (pure DOI list) |
+| `pending.txt` | Source papers that couldn't be processed (no PDF): `Title — DOI` |
 
 ### Read Tracking
 
@@ -76,11 +74,13 @@ This skill was designed with token budget consciousness. Key strategies:
 
 | Strategy | Savings |
 |----------|---------|
-| `concise` API format for Phase 1 item scanning | ~60% |
+| `concise` + `top:true` API format for Phase 1 item scanning | ~60% |
+| Title keyword pre-check before PDF fetch (Phase 2 Step 0) | ~50% |
 | Keyword pre-filtering before full reference extraction | ~70% |
 | Skip papers with zero keyword hits in full text | ~100% of irrelevant papers |
-| Abstract lookups only for ambiguous borderline papers | ~80% |
-| Source-article DOI comparison over per-item API search | ~90% |
+| Abstract lookups only for borderline papers (hard criteria, batch-fetched) | ~80%+ |
+| Dedup collection set comparison over per-item Zotero API search | ~90% |
+| OpenAlex Boolean search + structured fields over Crossref text search | ~50% |
 
 ## License
 
