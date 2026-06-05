@@ -3,7 +3,7 @@
   "groupings": [
     {
       "title": "Academic Research",
-      "description": "Skills for academic literature mining, reference searching, and Zotero integration.",
+      "description": "Two-mode academic reference mining (topic & outline) via Zotero citation chaining or OpenAlex/Crossref web search. Features PDF pre-screening, multi-source dedup, Zotero library dedup, and aggressive token optimization.",
       "skills": [
         "reference-searching"
       ]

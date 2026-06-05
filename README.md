@@ -1,8 +1,8 @@
 # reference-searching
 
-A [Claude Code](https://claude.ai/code) skill for automated citation chaining and reference mining from your Zotero library.
+A [Claude Code](https://claude.ai/code) skill for automated citation chaining and reference mining. Two modes: (1) **Topic mode** — find papers by topic from Zotero collection references or via OpenAlex/Crossref web search; (2) **Outline mode** — derive structured keywords from a review outline file, then mine references or search academic databases. Features aggressive token optimization with PDF pre-screening, batch API calls, and hard borderline filtering thresholds.
 
-给定一个 Zotero collection 和一个研究主题，自动遍历 collection 中的源文章，从参考文献列表中挖掘与主题相关的新论文，并输出去重、库内查重后的 DOI 清单。
+双模式学术文献挖掘：(1) **主题模式** — 给定主题，从 Zotero collection 参考文献链或 OpenAlex/Crossref 网络搜索中找相关论文；(2) **综述大纲模式** — 从大纲文件中提取结构化 Grand+Small 关键词，再挖掘参考文献或搜索数据库。内置激进 token 优化：PDF 关键词预筛、批量 API 调用、硬性边缘文献过滤阈值。输出去重、库内查重后的纯 DOI 清单。
 
 ## How it Works
 

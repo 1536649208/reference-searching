@@ -1,6 +1,6 @@
 ---
 name: reference-searching
-description: "Search references of papers in a Zotero collection for papers related to a specific topic, or use a review outline to find relevant references either from Zotero reference chains or via direct web search. Use when the user asks to find papers related to topic X from the references of papers in a Zotero collection/library, wants to do citation chaining / reference mining from their Zotero library, or provides a review outline file to find relevant references. Triggers include: \"search references in my Zotero\", \"find papers about X from my library's references\", \"从我的Zotero库里找XX相关的参考文献\", \"在我的XX collection里搜参考文献\", \"根据综述大纲找参考文献\", \"帮我在写综述时找相关文献\"."
+description: "Two-mode academic reference mining: (1) Topic mode — find papers on a topic from Zotero collection references or via OpenAlex/Crossref web search; (2) Outline mode — use a review outline (PDF/DOCX/PPTX/MD/txt) to derive structured Grand+Small keywords, then mine references or search databases. Features: PDF full-text keyword pre-screening, two-pass title+abstract filtering, multi-source dedup, Zotero library dedup via set comparison, claude-read tag tracking, batch API calls, aggressive token optimization (~60-90% savings per phase). Output: pure DOI list (dois_new.txt) + unprocessed papers (pending.txt). Triggers: \"search references in my Zotero\", \"find papers about X from my library's references\", \"从我的Zotero库里找XX相关的参考文献\", \"在我的XX collection里搜参考文献\", \"根据综述大纲找参考文献\", \"帮我在写综述时找相关文献\"."
 ---
 
 # Reference Searching Skill
