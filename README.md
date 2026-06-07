@@ -54,8 +54,8 @@ Topic vs outline is **auto-detected** — drop a file path (PDF/DOCX/MD) for out
 ## Installation
 
 ```bash
-git clone https://github.com/1536649208/reference-curator.git
-cp reference-curator/SKILL.md ~/.claude/skills/reference-curator/SKILL.md
+git clone https://github.com/1536649208/reference-curator-skill.git
+cp reference-curator-skill/SKILL.md ~/.claude/skills/reference-curator/SKILL.md
 ```
 
 Or via the Claude Code skill marketplace:
