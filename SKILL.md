@@ -54,7 +54,7 @@ Search OpenAlex/Crossref directly. Zotero collection = dedup only. 3 questions:
 Shared by Collection & Web when input is an outline file.
 
 ### Step 0b-2: Convert
-`markitdown "<file>" -o /tmp/reference_searching_outline.md`
+`markitdown "<file>" -o /tmp/reference_curator_outline.md`
 Fallback: `pipx install 'markitdown[all]'`; `strings`/`cat` if unavailable.
 
 ### Step 0b-3: Parse
