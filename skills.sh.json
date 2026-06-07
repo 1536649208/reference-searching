@@ -3,9 +3,9 @@
   "groupings": [
     {
       "title": "Academic Research",
-      "description": "Two-mode academic reference mining (topic & outline) via Zotero citation chaining or OpenAlex/Crossref web search. Features PDF pre-screening, multi-source dedup, Zotero library dedup, and aggressive token optimization.",
+      "description": "Three-mode academic reference curator: Collection Searching (Zotero citation mining), Web Searching (OpenAlex/Crossref), and Literature Audit (relevance review). Features PDF pre-screening, multi-source dedup, Zotero library dedup, and aggressive token optimization.",
       "skills": [
-        "reference-searching"
+        "reference-curator"
       ]
     }
   ]
