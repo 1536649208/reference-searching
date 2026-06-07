@@ -1,4 +1,4 @@
-# reference-curator
+# Reference Curator
 
 发现 · 筛选 · 清理 — A [Claude Code](https://claude.ai/code) skill for academic reference curation. Three modes: (1) **Collection Searching** — mine references from Zotero collection papers; (2) **Web Searching** — search OpenAlex/Crossref directly; (3) **Literature Audit** — review existing papers to identify irrelevant ones. Features aggressive token optimization (~50-100% savings per phase), PDF keyword pre-screening, multi-source dedup, Zotero library dedup via set comparison, and claude-read tag tracking.
 
